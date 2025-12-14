@@ -1,10 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { AuthModal } from '@/components/AuthModal';
+import { CreatePostModal } from '@/components/CreatePostModal';
+import { api, getCurrentUser, getAuthToken, removeAuthToken, removeCurrentUser } from '@/lib/api';
+import { useToast } from '@/hooks/use-toast';
 
 type Post = {
   id: number;
@@ -31,7 +35,72 @@ type Story = {
 const Index = () => {
   const [activeTab, setActiveTab] = useState('feed');
   const [selectedStory, setSelectedStory] = useState<Story | null>(null);
-  const [posts, setPosts] = useState<Post[]>([
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [createPostModalOpen, setCreatePostModalOpen] = useState(false);
+  const [posts, setPosts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    const user = getCurrentUser();
+    const token = getAuthToken();
+    
+    if (user && token) {
+      setCurrentUser(user);
+    }
+    
+    loadPosts();
+  }, []);
+
+  const loadPosts = async () => {
+    setLoading(true);
+    try {
+      const result = await api.posts.getAll();
+      if (result.posts) {
+        setPosts(result.posts);
+      }
+    } catch (error) {
+      console.error('Failed to load posts:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    removeAuthToken();
+    removeCurrentUser();
+    setCurrentUser(null);
+    toast({ title: 'Вы вышли из аккаунта' });
+  };
+
+  const handleLike = async (postId: number) => {
+    if (!currentUser) {
+      setAuthModalOpen(true);
+      return;
+    }
+    
+    try {
+      await api.posts.like(postId);
+      setPosts(posts.map(post => 
+        post.id === postId 
+          ? { ...post, likes_count: post.likes_count + 1 }
+          : post
+      ));
+    } catch (error) {
+      toast({ title: 'Ошибка', description: 'Не удалось поставить лайк', variant: 'destructive' });
+    }
+  };
+
+  const handleCreatePost = () => {
+    if (!currentUser) {
+      setAuthModalOpen(true);
+      return;
+    }
+    setCreatePostModalOpen(true);
+  };
+
+  const [dummyPosts] = useState<Post[]>([
     {
       id: 1,
       author: {
@@ -76,6 +145,8 @@ const Index = () => {
     }
   ]);
 
+  const displayPosts = posts.length > 0 ? posts : dummyPosts;
+
   const stories: Story[] = [
     { id: 1, username: 'Твоя история', avatar: '/placeholder.svg', viewed: false },
     { id: 2, username: 'Анна', avatar: '/placeholder.svg', viewed: false },
@@ -84,14 +155,6 @@ const Index = () => {
     { id: 5, username: 'Иван', avatar: '/placeholder.svg', viewed: false },
     { id: 6, username: 'Ксения', avatar: '/placeholder.svg', viewed: true }
   ];
-
-  const handleLike = (postId: number) => {
-    setPosts(posts.map(post => 
-      post.id === postId 
-        ? { ...post, liked: !post.liked, likes: post.liked ? post.likes - 1 : post.likes + 1 }
-        : post
-    ));
-  };
 
   const ProfileView = () => (
     <div className="max-w-4xl mx-auto animate-fade-in-up">
@@ -146,12 +209,26 @@ const Index = () => {
             Lumi+
           </h1>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" className="hover:bg-primary/10">
-              <Icon name="Heart" size={20} />
-            </Button>
-            <Button variant="ghost" size="icon" className="hover:bg-primary/10">
-              <Icon name="MessageCircle" size={20} />
-            </Button>
+            {currentUser ? (
+              <>
+                <Button variant="ghost" size="icon" className="hover:bg-primary/10" onClick={handleCreatePost}>
+                  <Icon name="Plus" size={20} />
+                </Button>
+                <Button variant="ghost" size="icon" className="hover:bg-primary/10">
+                  <Icon name="Heart" size={20} />
+                </Button>
+                <Button variant="ghost" size="icon" className="hover:bg-primary/10">
+                  <Icon name="MessageCircle" size={20} />
+                </Button>
+                <Button variant="ghost" size="sm" onClick={handleLogout}>
+                  Выход
+                </Button>
+              </>
+            ) : (
+              <Button onClick={() => setAuthModalOpen(true)}>
+                Войти
+              </Button>
+            )}
           </div>
         </div>
       </header>
@@ -201,17 +278,33 @@ const Index = () => {
             </div>
 
             <div className="space-y-6">
-              {posts.map((post) => (
+              {loading ? (
+                <div className="text-center py-20">
+                  <Icon name="Loader2" size={48} className="mx-auto animate-spin text-muted-foreground" />
+                  <p className="mt-4 text-muted-foreground">Загрузка постов...</p>
+                </div>
+              ) : displayPosts.length === 0 ? (
+                <div className="text-center py-20">
+                  <Icon name="ImageOff" size={64} className="mx-auto mb-4 text-muted-foreground" />
+                  <h2 className="text-2xl font-bold mb-2">Пока нет постов</h2>
+                  <p className="text-muted-foreground mb-6">Станьте первым, кто поделится контентом!</p>
+                  <Button onClick={handleCreatePost}>
+                    <Icon name="Plus" className="mr-2" size={18} />
+                    Создать пост
+                  </Button>
+                </div>
+              ) : (
+                displayPosts.map((post: any) => (
                 <Card key={post.id} className="overflow-hidden border-border/50 bg-white/80 backdrop-blur-sm animate-fade-in-up hover:shadow-lg transition-shadow">
                   <CardContent className="p-0">
                     <div className="flex items-center gap-3 p-4">
                       <Avatar>
-                        <AvatarImage src={post.author.avatar} />
-                        <AvatarFallback>{post.author.name[0]}</AvatarFallback>
+                        <AvatarImage src={post.author?.avatar_url || post.author?.avatar} />
+                        <AvatarFallback>{(post.author?.full_name || post.author?.name)?.[0]}</AvatarFallback>
                       </Avatar>
                       <div className="flex-1">
-                        <p className="font-semibold">{post.author.name}</p>
-                        <p className="text-sm text-muted-foreground">{post.author.username}</p>
+                        <p className="font-semibold">{post.author?.full_name || post.author?.name}</p>
+                        <p className="text-sm text-muted-foreground">@{post.author?.username}</p>
                       </div>
                       <Button variant="ghost" size="icon">
                         <Icon name="MoreVertical" size={20} />
@@ -220,7 +313,7 @@ const Index = () => {
 
                     <div className="relative aspect-square bg-gradient-to-br from-primary/10 to-accent/10">
                       <img 
-                        src={post.image} 
+                        src={post.media_urls?.[0] || post.image} 
                         alt="Post" 
                         className="w-full h-full object-cover"
                       />
@@ -248,19 +341,20 @@ const Index = () => {
                       </div>
 
                       <div>
-                        <p className="font-semibold mb-1">{post.likes.toLocaleString()} отметок "Нравится"</p>
+                        <p className="font-semibold mb-1">{(post.likes_count || post.likes || 0).toLocaleString()} отметок "Нравится"</p>
                         <p className="text-sm">
-                          <span className="font-semibold">{post.author.username}</span> {post.caption}
+                          <span className="font-semibold">@{post.author?.username}</span> {post.caption}
                         </p>
                         <button className="text-sm text-muted-foreground mt-1">
-                          Посмотреть все комментарии ({post.comments})
+                          Посмотреть все комментарии ({post.comments_count || post.comments || 0})
                         </button>
-                        <p className="text-xs text-muted-foreground mt-1">{post.timestamp}</p>
+                        <p className="text-xs text-muted-foreground mt-1">{post.timestamp || new Date(post.created_at).toLocaleDateString('ru')}</p>
                       </div>
                     </div>
                   </CardContent>
                 </Card>
-              ))}
+              ))
+              )}
             </div>
           </TabsContent>
 
@@ -335,6 +429,22 @@ const Index = () => {
           </div>
         </div>
       )}
+
+      <AuthModal 
+        open={authModalOpen} 
+        onClose={() => setAuthModalOpen(false)}
+        onSuccess={() => {
+          const user = getCurrentUser();
+          setCurrentUser(user);
+          loadPosts();
+        }}
+      />
+
+      <CreatePostModal
+        open={createPostModalOpen}
+        onClose={() => setCreatePostModalOpen(false)}
+        onSuccess={() => loadPosts()}
+      />
     </div>
   );
 };
